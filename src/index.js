@@ -4,10 +4,26 @@ import { handleCommand } from "./handlers/commands.js";
 import { handlePhotoMessage } from "./handlers/photos.js";
 import { initStorage } from "./storage/store.js";
 import { getUpdates, sendMessage } from "./telegram/api.js";
+import { logError, logInfo } from "./utils/logger.js";
 
 let offset = 0;
 
 async function processUpdate(update) {
+  logInfo("telegram.update.received", {
+    updateId: update.update_id,
+    hasMessage: Boolean(update.message),
+    hasCallbackQuery: Boolean(update.callback_query),
+    messageType: update.message?.photo?.length
+      ? "photo"
+      : update.message?.text?.startsWith("/")
+        ? "command"
+        : update.message?.text
+          ? "text"
+          : update.message
+            ? "other"
+            : undefined,
+  });
+
   if (update.callback_query) {
     return handleCallbackQuery(update.callback_query);
   }
@@ -37,23 +53,37 @@ async function main() {
   }
 
   await initStorage();
-  console.log("Coffee Journal bot is running...");
+  logInfo("app.started", {
+    storageBackend: config.storageBackend,
+    storageDir: config.storageDir,
+    supabaseConfigured: Boolean(
+      config.supabaseUrl && config.supabaseServiceRoleKey
+    ),
+    ocrApiKeyMode: config.ocrSpaceApiKey === "helloworld" ? "demo" : "custom",
+  });
 
   while (true) {
     try {
       const updates = await getUpdates(offset);
+      if (updates.length > 0) {
+        logInfo("telegram.updates.batch", {
+          count: updates.length,
+          nextOffsetHint: updates[updates.length - 1]?.update_id + 1,
+        });
+      }
+
       for (const update of updates) {
         offset = update.update_id + 1;
         await processUpdate(update);
       }
     } catch (error) {
-      console.error("Polling error:", error);
+      logError("telegram.polling.failed", error, { offset });
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
 }
 
 main().catch((error) => {
-  console.error(error);
+  logError("app.crashed", error);
   process.exit(1);
 });

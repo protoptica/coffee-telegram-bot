@@ -1,5 +1,6 @@
 import path from "node:path";
 import { config } from "../config.js";
+import { logInfo } from "../utils/logger.js";
 import { ensureDir, readJson, writeJson } from "../utils/fs.js";
 
 const entriesFile = path.join(config.storageDir, "entries.json");
@@ -10,6 +11,10 @@ const photosDir = path.join(config.storageDir, "photos");
 export async function initJsonStorage() {
   await ensureDir(config.storageDir);
   await ensureDir(photosDir);
+  logInfo("storage.json.initialized", {
+    storageDir: config.storageDir,
+    photosDir,
+  });
 }
 
 export async function getJsonEntries() {

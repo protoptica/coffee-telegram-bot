@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { basename } from "node:path";
 import { config } from "../config.js";
+import { logError, logInfo } from "../utils/logger.js";
 import { parseCoffeeText } from "./coffee-parser.js";
 
 export class CoffeeOcrError extends Error {
@@ -12,13 +13,31 @@ export class CoffeeOcrError extends Error {
 }
 
 export async function analyzeCoffeePhoto(filePath) {
-  const rawText = await extractTextViaOcrSpace(filePath);
-  const parsed = parseCoffeeText(rawText);
+  logInfo("ocr.analysis.started", {
+    fileName: basename(filePath),
+  });
 
-  return {
-    ...parsed,
-    rawText,
-  };
+  try {
+    const rawText = await extractTextViaOcrSpace(filePath);
+    const parsed = parseCoffeeText(rawText);
+    logInfo("ocr.analysis.completed", {
+      fileName: basename(filePath),
+      rawTextLength: rawText.length,
+      coffeeName: parsed.coffeeName,
+      roasterName: parsed.roasterName,
+      descriptorsCount: parsed.descriptors?.length ?? 0,
+    });
+
+    return {
+      ...parsed,
+      rawText,
+    };
+  } catch (error) {
+    logError("ocr.analysis.failed", error, {
+      fileName: basename(filePath),
+    });
+    throw error;
+  }
 }
 
 async function extractTextViaOcrSpace(filePath) {
@@ -31,6 +50,10 @@ async function extractTextViaOcrSpace(filePath) {
   formData.append("isOverlayRequired", "false");
   formData.append("OCREngine", "2");
   formData.append("scale", "true");
+  logInfo("ocr.request.started", {
+    fileName: basename(filePath),
+    apiKeyMode: config.ocrSpaceApiKey === "helloworld" ? "demo" : "custom",
+  });
 
   const response = await fetch("https://api.ocr.space/parse/image", {
     method: "POST",
@@ -60,6 +83,12 @@ async function extractTextViaOcrSpace(filePath) {
   if (!rawText) {
     throw new CoffeeOcrError("OCR returned no text", "OCR_EMPTY");
   }
+
+  logInfo("ocr.request.completed", {
+    fileName: basename(filePath),
+    parsedResultsCount: (json.ParsedResults ?? []).length,
+    rawTextLength: rawText.length,
+  });
 
   return rawText;
 }

@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { logInfo } from "../utils/logger.js";
 import { ensureDir } from "../utils/fs.js";
 
 const photosDir = `${config.storageDir}/photos`;
@@ -99,6 +100,10 @@ function toSupabasePendingRatingRow(ratingSessionId, pendingRating) {
 
 export async function initSupabaseStorage() {
   await ensureDir(photosDir);
+  logInfo("storage.supabase.initialized", {
+    photosDir,
+    supabaseUrl: config.supabaseUrl,
+  });
 }
 
 export async function addSupabaseEntry(entry) {

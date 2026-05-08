@@ -6,48 +6,105 @@ import {
   editMessageText,
 } from "../telegram/api.js";
 import { formatCoffeeCard } from "../formatters/entry.js";
+import { logError, logInfo } from "../utils/logger.js";
 
 export async function handleCallbackQuery(callbackQuery) {
   const data = callbackQuery.data ?? "";
   const userId = callbackQuery.from.id;
   const chatId = callbackQuery.message?.chat.id;
   const messageId = callbackQuery.message?.message_id;
+  logInfo("rating.callback.received", {
+    userId,
+    chatId,
+    messageId,
+    callbackQueryId: callbackQuery.id,
+    data,
+  });
 
   if (!data.startsWith("rate:") || !chatId || !messageId) {
     return false;
   }
 
-  const [, ratingSessionId, ratingValue] = data.split(":");
-  const pendingDraft = ratingSessionId ? await getPendingRating(ratingSessionId) : null;
+  try {
+    const [, ratingSessionId, ratingValue] = data.split(":");
+    const pendingDraft = ratingSessionId ? await getPendingRating(ratingSessionId) : null;
 
-  if (!pendingDraft || pendingDraft.userId !== userId) {
-    await answerCallbackQuery(callbackQuery.id, "This rating session expired.");
-    return true;
-  }
-
-  const rating = Number(ratingValue);
-  const entry = {
-    entryId: randomUUID(),
-    ...pendingDraft,
-    rating,
-  };
-
-  await addEntry(entry);
-  await clearPendingRating(ratingSessionId);
-  if (pendingDraft.processingMessageId) {
-    try {
-      await deleteMessage(chatId, pendingDraft.processingMessageId);
-    } catch {
-      // Ignore if Telegram no longer allows deleting the temporary message.
+    if (!pendingDraft || pendingDraft.userId !== userId) {
+      logInfo("rating.callback.expired", {
+        userId,
+        chatId,
+        messageId,
+        ratingSessionId,
+      });
+      await answerCallbackQuery(callbackQuery.id, "This rating session expired.");
+      return true;
     }
+
+    const rating = Number(ratingValue);
+    const entry = {
+      entryId: randomUUID(),
+      ...pendingDraft,
+      rating,
+    };
+
+    logInfo("rating.entry.save_started", {
+      userId,
+      chatId,
+      messageId,
+      ratingSessionId,
+      rating,
+      coffeeName: entry.coffeeName,
+    });
+    await addEntry(entry);
+    logInfo("rating.entry.saved", {
+      userId,
+      chatId,
+      messageId,
+      ratingSessionId,
+      rating,
+      entryId: entry.entryId,
+    });
+
+    await clearPendingRating(ratingSessionId);
+    logInfo("rating.pending_rating.cleared", {
+      userId,
+      chatId,
+      messageId,
+      ratingSessionId,
+    });
+
+    if (pendingDraft.processingMessageId) {
+      try {
+        await deleteMessage(chatId, pendingDraft.processingMessageId);
+      } catch {
+        // Ignore if Telegram no longer allows deleting the temporary message.
+      }
+    }
+
+    await editMessageText(
+      chatId,
+      messageId,
+      `Saved to your collection.\n\n${formatCoffeeCard(entry)}`
+    );
+    await answerCallbackQuery(callbackQuery.id, `Saved rating ${rating}/5`);
+    logInfo("rating.callback.completed", {
+      userId,
+      chatId,
+      messageId,
+      ratingSessionId,
+      rating,
+      entryId: entry.entryId,
+    });
+
+    return true;
+  } catch (error) {
+    logError("rating.callback.failed", error, {
+      userId,
+      chatId,
+      messageId,
+      callbackQueryId: callbackQuery.id,
+      data,
+    });
+    throw error;
   }
-
-  await editMessageText(
-    chatId,
-    messageId,
-    `Saved to your collection.\n\n${formatCoffeeCard(entry)}`
-  );
-  await answerCallbackQuery(callbackQuery.id, `Saved rating ${rating}/5`);
-
-  return true;
 }
