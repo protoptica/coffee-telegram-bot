@@ -1,83 +1,114 @@
-import path from "node:path";
 import { config } from "../config.js";
-import { ensureDir, readJson, writeJson } from "../utils/fs.js";
-
-const entriesFile = path.join(config.storageDir, "entries.json");
-const sessionsFile = path.join(config.storageDir, "sessions.json");
-const pendingRatingsFile = path.join(config.storageDir, "pending-ratings.json");
-const photosDir = path.join(config.storageDir, "photos");
+import {
+  addJsonEntry,
+  clearJsonPendingRating,
+  clearJsonSession,
+  getJsonLastEntryForUser,
+  getJsonPendingRating,
+  getJsonPhotosDir,
+  getJsonSession,
+  initJsonStorage,
+  listJsonEntriesForUser,
+  setJsonPendingRating,
+  setJsonSession,
+} from "./json-store.js";
+import {
+  addSupabaseEntry,
+  clearSupabasePendingRating,
+  getSupabaseLastEntryForUser,
+  getSupabasePendingRating,
+  getSupabasePhotosDir,
+  initSupabaseStorage,
+  listSupabaseEntriesForUser,
+  setSupabasePendingRating,
+} from "./supabase-store.js";
 
 export async function initStorage() {
-  await ensureDir(config.storageDir);
-  await ensureDir(photosDir);
-}
+  if (config.storageBackend === "supabase") {
+    await initSupabaseStorage();
+    return;
+  }
 
-export async function getEntries() {
-  return readJson(entriesFile, []);
-}
-
-export async function saveEntries(entries) {
-  await writeJson(entriesFile, entries);
+  await initJsonStorage();
 }
 
 export async function addEntry(entry) {
-  const entries = await getEntries();
-  entries.unshift(entry);
-  await saveEntries(entries);
+  if (config.storageBackend === "supabase") {
+    return addSupabaseEntry(entry);
+  }
+
+  return addJsonEntry(entry);
 }
 
 export async function listEntriesForUser(userId, limit = 10) {
-  const entries = await getEntries();
-  return entries.filter((entry) => entry.userId === userId).slice(0, limit);
+  if (config.storageBackend === "supabase") {
+    return listSupabaseEntriesForUser(userId, limit);
+  }
+
+  return listJsonEntriesForUser(userId, limit);
 }
 
 export async function getLastEntryForUser(userId) {
-  const entries = await listEntriesForUser(userId, 1);
-  return entries[0] ?? null;
-}
+  if (config.storageBackend === "supabase") {
+    return getSupabaseLastEntryForUser(userId);
+  }
 
-export async function getSessions() {
-  return readJson(sessionsFile, {});
+  return getJsonLastEntryForUser(userId);
 }
 
 export async function getSession(userId) {
-  const sessions = await getSessions();
-  return sessions[String(userId)] ?? null;
+  if (config.storageBackend === "supabase") {
+    return null;
+  }
+
+  return getJsonSession(userId);
 }
 
 export async function setSession(userId, session) {
-  const sessions = await getSessions();
-  sessions[String(userId)] = session;
-  await writeJson(sessionsFile, sessions);
+  if (config.storageBackend === "supabase") {
+    return;
+  }
+
+  await setJsonSession(userId, session);
 }
 
 export async function clearSession(userId) {
-  const sessions = await getSessions();
-  delete sessions[String(userId)];
-  await writeJson(sessionsFile, sessions);
-}
+  if (config.storageBackend === "supabase") {
+    return;
+  }
 
-export async function getPendingRatings() {
-  return readJson(pendingRatingsFile, {});
+  await clearJsonSession(userId);
 }
 
 export async function getPendingRating(ratingSessionId) {
-  const pendingRatings = await getPendingRatings();
-  return pendingRatings[String(ratingSessionId)] ?? null;
+  if (config.storageBackend === "supabase") {
+    const row = await getSupabasePendingRating(ratingSessionId);
+    return row?.payload ?? null;
+  }
+
+  return getJsonPendingRating(ratingSessionId);
 }
 
 export async function setPendingRating(ratingSessionId, pendingRating) {
-  const pendingRatings = await getPendingRatings();
-  pendingRatings[String(ratingSessionId)] = pendingRating;
-  await writeJson(pendingRatingsFile, pendingRatings);
+  if (config.storageBackend === "supabase") {
+    return setSupabasePendingRating(ratingSessionId, pendingRating);
+  }
+
+  return setJsonPendingRating(ratingSessionId, pendingRating);
 }
 
 export async function clearPendingRating(ratingSessionId) {
-  const pendingRatings = await getPendingRatings();
-  delete pendingRatings[String(ratingSessionId)];
-  await writeJson(pendingRatingsFile, pendingRatings);
+  if (config.storageBackend === "supabase") {
+    return clearSupabasePendingRating(ratingSessionId);
+  }
+
+  return clearJsonPendingRating(ratingSessionId);
 }
 
 export function getPhotosDir() {
-  return photosDir;
+  if (config.storageBackend === "supabase") {
+    return getSupabasePhotosDir();
+  }
+
+  return getJsonPhotosDir();
 }

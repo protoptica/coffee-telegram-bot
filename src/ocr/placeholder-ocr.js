@@ -3,6 +3,14 @@ import { basename } from "node:path";
 import { config } from "../config.js";
 import { parseCoffeeText } from "./coffee-parser.js";
 
+export class CoffeeOcrError extends Error {
+  constructor(message, code = "OCR_FAILED") {
+    super(message);
+    this.name = "CoffeeOcrError";
+    this.code = code;
+  }
+}
+
 export async function analyzeCoffeePhoto(filePath) {
   const rawText = await extractTextViaOcrSpace(filePath);
   const parsed = parseCoffeeText(rawText);
@@ -33,7 +41,7 @@ async function extractTextViaOcrSpace(filePath) {
   });
 
   if (!response.ok) {
-    throw new Error(`OCR request failed with status ${response.status}`);
+    throw new CoffeeOcrError(`OCR request failed with status ${response.status}`, "OCR_HTTP_ERROR");
   }
 
   const json = await response.json();
@@ -41,7 +49,7 @@ async function extractTextViaOcrSpace(filePath) {
     const message = Array.isArray(json.ErrorMessage)
       ? json.ErrorMessage.join("; ")
       : json.ErrorMessage || "OCR processing failed";
-    throw new Error(message);
+    throw new CoffeeOcrError(message, "OCR_PROCESSING_ERROR");
   }
 
   const rawText = (json.ParsedResults ?? [])
@@ -50,7 +58,7 @@ async function extractTextViaOcrSpace(filePath) {
     .join("\n");
 
   if (!rawText) {
-    throw new Error("OCR returned no text");
+    throw new CoffeeOcrError("OCR returned no text", "OCR_EMPTY");
   }
 
   return rawText;
