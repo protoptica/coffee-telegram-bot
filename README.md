@@ -17,7 +17,7 @@ export TELEGRAM_STORAGE_DIR="/absolute/path/to/storage"
 export OCR_SPACE_API_KEY="your-ocr-space-key"
 export STORAGE_BACKEND="json"
 export SUPABASE_URL="https://your-project.supabase.co"
-export SUPABASE_ANON_KEY="your-supabase-anon-key"
+export SUPABASE_SERVICE_ROLE_KEY="your-supabase-service-role-key"
 ```
 
 ## Run
@@ -31,10 +31,11 @@ npm start
 
 - long polling works
 - accepts photo messages
-- stores user sessions
+- supports multiple concurrent pending ratings per user
 - asks for rating via inline keyboard
-- saves entries to local JSON
+- cleans up temporary "Reading the bag..." messages
 - OCR uses OCR.space API and local coffee field parsing heuristics
+- supports two persistence backends: local JSON and Supabase
 
 ## Storage Backends
 
@@ -56,9 +57,15 @@ Recommended first real database setup.
 3. Add:
    - `STORAGE_BACKEND=supabase`
    - `SUPABASE_URL`
-   - `SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
 
 For the current MVP this is enough to move coffee entries and pending ratings out of local JSON.
+
+Important:
+
+- the bot should use the Supabase `service_role` key
+- the preferred variable name is `SUPABASE_SERVICE_ROLE_KEY`
+- backward compatibility with `SUPABASE_ANON_KEY` exists temporarily, but should be removed later
 
 ## OCR Note
 
@@ -67,4 +74,6 @@ For the current MVP this is enough to move coffee entries and pending ratings ou
 
 ## Next Step
 
-Replace the placeholder OCR adapter with a real OCR implementation.
+- move photo storage from local disk to Supabase Storage or S3
+- improve roaster detection with curated roaster catalog + aliases
+- replace long polling with webhook delivery for hosted production use

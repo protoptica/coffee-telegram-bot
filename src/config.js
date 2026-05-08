@@ -6,7 +6,10 @@ export const config = {
   ocrSpaceApiKey: process.env.OCR_SPACE_API_KEY ?? "helloworld",
   storageBackend: process.env.STORAGE_BACKEND ?? "json",
   supabaseUrl: process.env.SUPABASE_URL ?? "",
-  supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? "",
+  supabaseServiceRoleKey:
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??
+    process.env.SUPABASE_ANON_KEY ??
+    "",
   storageDir:
     process.env.TELEGRAM_STORAGE_DIR ??
     path.resolve(process.cwd(), "storage"),

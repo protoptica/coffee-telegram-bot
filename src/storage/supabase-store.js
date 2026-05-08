@@ -4,13 +4,15 @@ import { ensureDir } from "../utils/fs.js";
 const photosDir = `${config.storageDir}/photos`;
 
 function getSupabaseHeaders() {
-  if (!config.supabaseUrl || !config.supabaseAnonKey) {
-    throw new Error("Supabase storage backend requires SUPABASE_URL and SUPABASE_ANON_KEY.");
+  if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
+    throw new Error(
+      "Supabase storage backend requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+    );
   }
 
   return {
-    apikey: config.supabaseAnonKey,
-    Authorization: `Bearer ${config.supabaseAnonKey}`,
+    apikey: config.supabaseServiceRoleKey,
+    Authorization: `Bearer ${config.supabaseServiceRoleKey}`,
     "Content-Type": "application/json",
   };
 }
