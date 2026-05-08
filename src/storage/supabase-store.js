@@ -40,6 +40,61 @@ function encode(value) {
   return encodeURIComponent(value);
 }
 
+function toSupabaseEntryRow(entry) {
+  return {
+    entry_id: entry.entryId,
+    id: entry.id,
+    user_id: entry.userId,
+    chat_id: entry.chatId,
+    telegram_photo_file_id: entry.telegramPhotoFileId,
+    local_photo_path: entry.localPhotoPath,
+    created_at: entry.createdAt,
+    coffee_name: entry.coffeeName,
+    roaster_name: entry.roasterName,
+    origin_country: entry.originCountry,
+    process: entry.process,
+    variety: entry.variety,
+    descriptors: entry.descriptors ?? [],
+    raw_text: entry.rawText ?? null,
+    rating: entry.rating ?? null,
+    processing_message_id: entry.processingMessageId ?? null,
+    rating_message_id: entry.ratingMessageId ?? null,
+  };
+}
+
+function fromSupabaseEntryRow(row) {
+  if (!row) return null;
+
+  return {
+    entryId: row.entry_id,
+    id: row.id,
+    userId: row.user_id,
+    chatId: row.chat_id,
+    telegramPhotoFileId: row.telegram_photo_file_id,
+    localPhotoPath: row.local_photo_path,
+    createdAt: row.created_at,
+    coffeeName: row.coffee_name,
+    roasterName: row.roaster_name,
+    originCountry: row.origin_country,
+    process: row.process,
+    variety: row.variety,
+    descriptors: row.descriptors ?? [],
+    rawText: row.raw_text,
+    rating: row.rating,
+    processingMessageId: row.processing_message_id,
+    ratingMessageId: row.rating_message_id,
+  };
+}
+
+function toSupabasePendingRatingRow(ratingSessionId, pendingRating) {
+  return {
+    rating_session_id: ratingSessionId,
+    user_id: pendingRating.userId,
+    created_at: pendingRating.createdAt,
+    payload: pendingRating,
+  };
+}
+
 export async function initSupabaseStorage() {
   await ensureDir(photosDir);
 }
@@ -50,14 +105,15 @@ export async function addSupabaseEntry(entry) {
     headers: {
       Prefer: "return=representation",
     },
-    body: JSON.stringify([entry]),
+    body: JSON.stringify([toSupabaseEntryRow(entry)]),
   });
 }
 
 export async function listSupabaseEntriesForUser(userId, limit = 10) {
-  return supabaseRequest(
-    `coffee_entries?userId=eq.${encode(userId)}&order=createdAt.desc&limit=${limit}`
+  const rows = await supabaseRequest(
+    `coffee_entries?user_id=eq.${encode(userId)}&order=created_at.desc&limit=${limit}`
   );
+  return rows.map(fromSupabaseEntryRow);
 }
 
 export async function getSupabaseLastEntryForUser(userId) {
@@ -67,7 +123,7 @@ export async function getSupabaseLastEntryForUser(userId) {
 
 export async function getSupabasePendingRating(ratingSessionId) {
   const rows = await supabaseRequest(
-    `pending_ratings?ratingSessionId=eq.${encode(ratingSessionId)}&limit=1`
+    `pending_ratings?rating_session_id=eq.${encode(ratingSessionId)}&limit=1`
   );
   return rows[0] ?? null;
 }
@@ -78,19 +134,12 @@ export async function setSupabasePendingRating(ratingSessionId, pendingRating) {
     headers: {
       Prefer: "resolution=merge-duplicates,return=representation",
     },
-    body: JSON.stringify([
-      {
-        ratingSessionId,
-        payload: pendingRating,
-        userId: pendingRating.userId,
-        createdAt: pendingRating.createdAt,
-      },
-    ]),
+    body: JSON.stringify([toSupabasePendingRatingRow(ratingSessionId, pendingRating)]),
   });
 }
 
 export async function clearSupabasePendingRating(ratingSessionId) {
-  await supabaseRequest(`pending_ratings?ratingSessionId=eq.${encode(ratingSessionId)}`, {
+  await supabaseRequest(`pending_ratings?rating_session_id=eq.${encode(ratingSessionId)}`, {
     method: "DELETE",
   });
 }
