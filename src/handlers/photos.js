@@ -135,6 +135,14 @@ export async function handlePhotoMessage(message) {
 function buildPhotoFailureMessage(error) {
   if (error instanceof CoffeeOcrError) {
     if (
+      error.code === "OCR_NETWORK_ERROR" ||
+      error.code === "OCR_TIMEOUT" ||
+      error.code === "OCR_HTTP_RETRYABLE"
+    ) {
+      return "The text recognition service is temporarily unavailable. Please try again in a minute.";
+    }
+
+    if (
       error.message.includes("Timed out waiting for results") ||
       error.code === "OCR_PROCESSING_ERROR"
     ) {
