@@ -27,6 +27,11 @@ cd "/Users/nonenone/Documents/New project 2/telegram-bot"
 npm start
 ```
 
+For moving the project to another Mac or into a fresh Codex setup, use:
+
+- [SETUP-NEW-MAC.md](/Users/nonenone/Documents/New%20project%202/telegram-bot/SETUP-NEW-MAC.md)
+- [.env.example](/Users/nonenone/Documents/New%20project%202/telegram-bot/.env.example)
+
 ## Current State
 
 - long polling works
@@ -36,6 +41,7 @@ npm start
 - cleans up temporary "Reading the bag..." messages
 - OCR uses OCR.space API and local coffee field parsing heuristics
 - supports two persistence backends: local JSON and Supabase
+- emits structured JSON logs for Railway/runtime diagnostics
 
 ## Storage Backends
 
@@ -66,6 +72,34 @@ Important:
 - the bot should use the Supabase `service_role` key
 - the preferred variable name is `SUPABASE_SERVICE_ROLE_KEY`
 - backward compatibility with `SUPABASE_ANON_KEY` exists temporarily, but should be removed later
+- after changing Railway variables, do a full redeploy before testing callback/rating flow
+- on startup, verify logs show:
+  - `storageBackend: "supabase"`
+  - `supabaseKeySource: "SUPABASE_SERVICE_ROLE_KEY"` or temporary `SUPABASE_ANON_KEY_FALLBACK`
+  - the expected `supabaseUrlHost`
+- the bot now saves `pending_ratings` before showing the clickable rating card, so if Supabase config is broken the card should not be shown as if it were safe to click
+
+## Railway Checklist
+
+Use this exact checklist when callback saves fail in production:
+
+1. Confirm Railway deploys the latest commit on branch `codex/fix-supabase-runtime-config`.
+2. Confirm service env vars contain:
+   - `STORAGE_BACKEND=supabase`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+3. Redeploy after any env change. Do not rely on an old running instance.
+4. Check startup logs for `app.started` and confirm:
+   - `storageBackend` is `supabase`
+   - `supabaseKeySource` is not `missing`
+   - `supabaseUrlHost` matches the intended Supabase project
+5. Run one full test:
+   - send photo
+   - confirm logs contain `photo.pending_rating.saved`
+   - confirm logs contain `photo.pending_rating.updated`
+   - click rating
+   - confirm logs contain `rating.entry.saved`
+6. If `photo.pending_rating.saved` is missing or startup crashes with Supabase config error, treat it as deployment/configuration, not a callback-only bug.
 
 ## OCR Note
 
@@ -74,6 +108,7 @@ Important:
 
 ## Next Step
 
-- move photo storage from local disk to Supabase Storage or S3
-- improve roaster detection with curated roaster catalog + aliases
-- replace long polling with webhook delivery for hosted production use
+1. Stabilize live Supabase config in Railway and confirm full `photo -> rating -> saved row` flow.
+2. Move photo storage from local disk to Supabase Storage.
+3. Replace long polling with webhook delivery for hosted production use.
+4. Improve roaster detection with curated roaster catalog + aliases.

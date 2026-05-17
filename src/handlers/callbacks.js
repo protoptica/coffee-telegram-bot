@@ -28,6 +28,12 @@ export async function handleCallbackQuery(callbackQuery) {
   try {
     const [, ratingSessionId, ratingValue] = data.split(":");
     const pendingDraft = ratingSessionId ? await getPendingRating(ratingSessionId) : null;
+    const rating = Number(ratingValue);
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid rating value.");
+      return true;
+    }
 
     if (!pendingDraft || pendingDraft.userId !== userId) {
       logInfo("rating.callback.expired", {
@@ -35,12 +41,12 @@ export async function handleCallbackQuery(callbackQuery) {
         chatId,
         messageId,
         ratingSessionId,
+        pendingDraftUserId: pendingDraft?.userId,
       });
       await answerCallbackQuery(callbackQuery.id, "This rating session expired.");
       return true;
     }
 
-    const rating = Number(ratingValue);
     const entry = {
       entryId: randomUUID(),
       ...pendingDraft,

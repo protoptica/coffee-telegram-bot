@@ -1,4 +1,4 @@
-import { config } from "../config.js";
+import { config, getSupabaseConfigDiagnostics } from "../config.js";
 import { logInfo } from "../utils/logger.js";
 import { ensureDir } from "../utils/fs.js";
 
@@ -6,8 +6,9 @@ const photosDir = `${config.storageDir}/photos`;
 
 function getSupabaseHeaders() {
   if (!config.supabaseUrl || !config.supabaseServiceRoleKey) {
+    const diagnostics = getSupabaseConfigDiagnostics();
     throw new Error(
-      "Supabase storage backend requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY."
+      `Supabase storage backend requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. keySource=${diagnostics.supabaseKeySource} supabaseUrlConfigured=${diagnostics.supabaseUrlConfigured} supabaseKeyConfigured=${diagnostics.supabaseKeyConfigured}`
     );
   }
 
@@ -100,9 +101,10 @@ function toSupabasePendingRatingRow(ratingSessionId, pendingRating) {
 
 export async function initSupabaseStorage() {
   await ensureDir(photosDir);
+  getSupabaseHeaders();
   logInfo("storage.supabase.initialized", {
     photosDir,
-    supabaseUrl: config.supabaseUrl,
+    ...getSupabaseConfigDiagnostics(),
   });
 }
 

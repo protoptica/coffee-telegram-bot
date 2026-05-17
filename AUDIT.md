@@ -1,207 +1,267 @@
 # Coffee Journal Telegram Bot Audit
 
-## Scope
-
 Audit date: 2026-05-08
 
-This document summarizes:
+## Scope
 
-- what has been implemented
-- current architecture
-- known bugs and inconsistencies
-- recommended next steps
+This document reflects the current state after:
 
-## Implemented
+- Telegram MVP implementation
+- Railway deployment
+- Supabase integration for `coffee_entries` and `pending_ratings`
+- config rename to `SUPABASE_SERVICE_ROLE_KEY`
+- structured runtime diagnostics rollout
 
-- Telegram bot with long polling
-- photo upload flow from Telegram chat
-- OCR through OCR.space
-- heuristic extraction of coffee fields
-- per-card rating sessions via inline keyboard
-- local JSON storage backend
-- Supabase storage backend for entries and pending ratings
-- Railway deployment path
+The goal of this audit is to separate:
+
+- what is already working
+- what is still fragile
+- what should be done next, in order
+
+## What Is Working
+
+- Telegram photo flow is live.
+- OCR runs through OCR.space.
+- OCR output is parsed into coffee fields.
+- One photo creates one independent rating session.
+- Multiple pending rating cards can coexist without overwriting each other.
+- Temporary `Reading the bag...` messages are cleaned up.
+- Final card is edited in place after successful rating save.
+- Two persistence backends exist:
+  - local JSON
+  - Supabase
+- Structured JSON logs now exist for:
+  - startup
+  - update receipt
+  - photo processing stages
+  - OCR request and parse stages
+  - pending rating persistence
+  - rating callback and final entry save
 
 ## Current Architecture
 
 ### Runtime
 
 - Node.js ESM application
-- Telegram Bot API via HTTP + `getUpdates`
-- single process, in-memory polling offset
+- Telegram Bot API over HTTP
+- long polling via `getUpdates`
+- single process
+- in-memory polling offset
 
-### Request Flow
+### Main Request Flow
 
-1. User sends photo
-2. Bot downloads largest Telegram photo variant
-3. Bot sends image to OCR.space
+1. User sends photo to bot.
+2. Bot downloads the largest Telegram photo variant.
+3. Bot runs OCR through OCR.space.
 4. OCR text is parsed into:
    - coffee name
-   - country
+   - roaster name
+   - origin country
    - process
    - variety
    - descriptors
-   - roaster name
-5. Bot sends rating card with inline buttons
-6. User selects rating
-7. Entry is persisted
+5. Bot sends rating card with inline keyboard.
+6. Bot persists pending rating session.
+7. User clicks rating button.
+8. Bot reads pending rating session.
+9. Bot writes final entry.
+10. Bot edits message into final saved card.
 
-### Storage
+### Storage Model
 
-Two backends exist:
+Two storage modes exist:
 
-- `json`
-  - entries in `storage/entries.json`
-  - pending rating sessions in `storage/pending-ratings.json`
-  - photos in `storage/photos/`
-- `supabase`
-  - entries in `coffee_entries`
-  - pending rating sessions in `pending_ratings`
-  - photos still stored on local disk
+- `STORAGE_BACKEND=json`
+  - entries: `storage/entries.json`
+  - pending ratings: `storage/pending-ratings.json`
+  - photos: `storage/photos/`
+
+- `STORAGE_BACKEND=supabase`
+  - entries: `coffee_entries`
+  - pending ratings: `pending_ratings`
+  - photos: still local disk only
 
 ### Main Modules
 
 - entrypoint: [src/index.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/index.js)
-- Telegram API wrapper: [src/telegram/api.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/telegram/api.js)
+- Telegram wrapper: [src/telegram/api.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/telegram/api.js)
 - photo flow: [src/handlers/photos.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/handlers/photos.js)
-- rating callback flow: [src/handlers/callbacks.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/handlers/callbacks.js)
-- OCR parser: [src/ocr/coffee-parser.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/ocr/coffee-parser.js)
+- callback flow: [src/handlers/callbacks.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/handlers/callbacks.js)
+- OCR adapter: [src/ocr/placeholder-ocr.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/ocr/placeholder-ocr.js)
+- parser heuristics: [src/ocr/coffee-parser.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/ocr/coffee-parser.js)
 - storage switch: [src/storage/store.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/storage/store.js)
 - Supabase adapter: [src/storage/supabase-store.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/storage/supabase-store.js)
+- logger: [src/utils/logger.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/utils/logger.js)
 
-## Findings
+## Current Findings
 
-::code-comment{title="[P1] Hosted mode still stores photos on ephemeral local disk" body="The Supabase backend only moves entry and pending-rating records into Postgres, but photo files are still written to a local path derived from `storageDir`. On Railway or any ephemeral container, those files are not durable across redeploys or restarts, while their paths are still persisted in the database. This produces broken references and data loss for any workflow that later expects the image to exist." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/storage/supabase-store.js" start=4 end=4 priority=1 confidence=0.98}
+::code-comment{title="[P1] Rating card was visible before pending state was durably saved" body="The photo flow originally sent the inline rating card before persisting `pending_ratings`. If Supabase config was stale, the key was missing at runtime, or the insert failed for any other reason, users still saw clickable buttons but callback lookup later returned no session. This was both a UX bug and a diagnostic trap because it made deployment failures look like callback-only issues." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/handlers/photos.js" start=75 end=114 priority=1 confidence=0.99}
 
-::code-comment{title="[P1] Long polling conflicts when more than one instance runs" body="The bot uses `getUpdates` in a tight loop with no single-instance coordination. Any second process with the same token, whether local or another deployment, causes Telegram to terminate one of the polling streams. For hosted production use this is an operational instability, not just a developer inconvenience." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/index.js" start=42 end=52 priority=1 confidence=0.95}
+::code-comment{title="[P1] Railway deployment can still run with stale or incomplete env config" body="Hosted failures can still come from runtime config drift. The bot now logs the detected Supabase key source and validates required Supabase env presence during startup, which makes stale deploys and missing Railway variables visible earlier instead of only during callback handling." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/config.js" start=3 end=26 priority=1 confidence=0.99}
 
-::code-comment{title="[P2] Supabase key migration needs cleanup after rename" body="The preferred server-side key name should be `SUPABASE_SERVICE_ROLE_KEY`, and the code now supports that. However, backward compatibility with the old `SUPABASE_ANON_KEY` name should be treated as transitional only and removed once deployments are updated, otherwise configuration drift remains possible." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/config.js" start=7 end=11 priority=2 confidence=0.97}
+::code-comment{title="[P1] Hosted mode still stores photos on ephemeral local disk" body="Even with `STORAGE_BACKEND=supabase`, photo files are still written to a local path derived from `storageDir`. On Railway this storage is not durable across restarts or redeploys, but the path is still saved with the entry. This remains the main data durability gap after database persistence." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/storage/supabase-store.js" start=4 end=4 priority=1 confidence=0.98}
 
-::code-comment{title="[P2] Roaster detection is too weak for Russian specialty packaging" body="Roaster extraction currently only looks for generic `coffee`/`.coffee` markers in the first few OCR lines. That will miss many real roasters that use logo-only branding, Cyrillic names, stylized names without the word `coffee`, or place the roaster away from the headline area. This is the main quality bottleneck once OCR succeeds." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/ocr/coffee-parser.js" start=155 end=166 priority=2 confidence=0.99}
+::code-comment{title="[P1] Long polling remains operationally fragile in hosted mode" body="The bot still relies on `getUpdates`, so any second instance with the same token can terminate polling with `other getUpdates request`. Token rotation solved the immediate conflict once, but the architectural risk remains until hosted delivery moves to webhooks or strict single-instance discipline is enforced." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/index.js" start=53 end=72 priority=1 confidence=0.96}
 
-::code-comment{title="[P2] OCR failure path hides root cause from operator logs" body="User-facing OCR errors are now handled cleanly, but there is no structured application log for which stage failed with which photo/session and which backend was active. That makes production diagnosis slower than it needs to be, especially when distinguishing OCR timeout, Supabase write failure, and Telegram API conflicts." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/handlers/photos.js" start=67 end=75 priority=2 confidence=0.89}
+::code-comment{title="[P2] Roaster detection is the weakest product-quality layer" body="OCR now gets far enough to produce useful cards, but roaster extraction remains heuristic and brittle for Russian specialty packaging. This is the most visible quality issue in normal user experience once storage/config bugs are stabilized." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/ocr/coffee-parser.js" start=155 end=166 priority=2 confidence=0.99}
 
-::code-comment{title="[P3] README is still partly operationally inconsistent" body="The README now reflects more of the current system, but it still centers the shell `npm start` path even though the project has been run in environments without npm in PATH, and it still treats the current setup as if local disk storage were acceptable beyond quick testing. This is documentation debt rather than an immediate runtime bug." file="/Users/nonenone/Documents/New project 2/telegram-bot/README.md" start=23 end=28 priority=3 confidence=0.76}
+::code-comment{title="[P2] Config migration fallback should remain temporary" body="The code still supports `SUPABASE_ANON_KEY` as a fallback for compatibility, but the canonical server variable is now `SUPABASE_SERVICE_ROLE_KEY`. This fallback is useful during migration, but leaving it indefinitely increases the chance of silent misconfiguration later." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/config.js" start=7 end=10 priority=2 confidence=0.97}
 
-## Highest Priority Improvements
+::code-comment{title="[P3] OCR adapter filename is misleading" body="`placeholder-ocr.js` is now a real OCR adapter with production logic, error handling, and logging. The filename no longer describes its role and will slow future maintenance or onboarding." file="/Users/nonenone/Documents/New project 2/telegram-bot/src/ocr/placeholder-ocr.js" start=1 end=1 priority=3 confidence=0.93}
 
-### 1. Move photos to durable object storage
+## Observability Status
 
-This is the most important architectural gap.
+Observability was previously a major gap. That is no longer true.
 
-Recommended target:
+The bot now emits structured logs for:
+
+- `app.started`
+- `telegram.update.received`
+- `telegram.updates.batch`
+- `telegram.polling.failed`
+- `photo.received`
+- `photo.processing.started`
+- `photo.downloaded`
+- `photo.ocr.parsed`
+- `photo.rating_prompt.sent`
+- `photo.pending_rating.saved`
+- `photo.processing.failed`
+- `ocr.request.started`
+- `ocr.request.completed`
+- `ocr.analysis.started`
+- `ocr.analysis.completed`
+- `ocr.analysis.failed`
+- `rating.callback.received`
+- `rating.callback.expired`
+- `rating.entry.save_started`
+- `rating.entry.saved`
+- `rating.pending_rating.cleared`
+- `rating.callback.completed`
+- `rating.callback.failed`
+- `storage.json.initialized`
+- `storage.supabase.initialized`
+
+Conclusion:
+
+- logging is no longer a roadmap item
+- deployment debugging should now happen from logs first, not from UI symptoms
+
+## Priority Order Now
+
+The correct engineering order has changed.
+
+### 1. Stabilize hosted Supabase configuration
+
+This is the immediate blocker.
+
+Definition of done:
+
+- Railway runs the latest commit
+- `SUPABASE_URL` is present
+- `SUPABASE_SERVICE_ROLE_KEY` is present
+- startup log `app.started` shows:
+  - `storageBackend: "supabase"`
+  - `supabaseKeySource: "SUPABASE_SERVICE_ROLE_KEY"` or temporary `SUPABASE_ANON_KEY_FALLBACK`
+  - expected `supabaseUrlHost`
+- one rating click produces:
+  - `photo.pending_rating.saved`
+  - `photo.pending_rating.updated`
+  - `rating.entry.saved`
+  - row visible in `coffee_entries`
+
+### 2. Move photo storage to durable object storage
+
+Target:
 
 - Supabase Storage
 
-What to change:
+Required change:
 
-- upload downloaded Telegram photo to a bucket
-- persist storage object path or public/signed URL
-- stop relying on `local_photo_path` in hosted mode
+- upload Telegram-downloaded image to bucket
+- persist object path instead of only local path
+- stop depending on Railway local disk for user photos
 
-### 2. Replace long polling with webhooks in hosted mode
+### 3. Replace long polling with webhooks in hosted mode
+
+Target:
+
+- Railway public HTTP endpoint
+- Telegram webhook delivery
 
 This removes:
 
-- `other getUpdates request` conflicts
-- ambiguity around duplicate running instances
-- wasted polling cycles
+- `other getUpdates request`
+- token-conflict style failures
+- polling ambiguity during deploys and local tests
 
-Recommended hosted design:
+### 4. Improve roaster detection quality
 
-- Railway public URL
-- Telegram webhook
-- one HTTP handler process
+This is the next product-quality workstream after infra stabilization.
 
-### 3. Improve roaster detection quality
-
-This should be treated as a dedicated workstream, not a small regex tweak.
-
-#### Where improvement must happen
-
-Primary file:
+Primary place to improve:
 
 - [src/ocr/coffee-parser.js](/Users/nonenone/Documents/New%20project%202/telegram-bot/src/ocr/coffee-parser.js)
 
-Supporting future assets:
+Recommended implementation path:
 
-- `src/ocr/roaster-catalog.js`
-- `data/roasters.json`
+- curated catalog of Russian roasters
+- aliases in Latin/Cyrillic
+- punctuation-normalized lookup
+- matching across all OCR lines
+- confidence score
+- reject weak guesses instead of inventing a roaster
 
-#### Recommended approach
+### 5. Remove transitional configuration and naming debt
 
-Phase 1:
+After production is stable:
 
-- build curated catalog of Russian roasters
-- include aliases, Latin/Cyrillic spellings, punctuation-normalized forms
-- match against all OCR lines, not just top 5
+- remove `SUPABASE_ANON_KEY` fallback
+- rename `placeholder-ocr.js`
+- document exact Railway env vars and deployment checks
 
-Phase 2:
+## Near-Term Task Summary
 
-- add fuzzy matching with confidence score
-- reject weak matches rather than guessing
+### Immediate tasks
 
-Phase 3:
+- verify Railway deploy is on latest commit
+- verify `SUPABASE_SERVICE_ROLE_KEY` exists in live env vars
+- redeploy
+- test one full photo -> rating -> row-in-Supabase flow
 
-- add packaging heuristics:
-  - roaster often near logo
-  - roaster often repeats across different lots
-  - some brands have stable visual tokens
+### Next tasks
 
-#### Why this matters
+- migrate photos to Supabase Storage
+- add webhook delivery
+- strengthen roaster detection with catalog-based matching
 
-Coffee name, country, and process are already reasonably salvageable from OCR text. Roaster detection is currently the weakest part of the product meaning, especially for repeat-purchase and collection browsing workflows.
+### Later tasks
 
-## Recommended Near-Term Roadmap
+- user-selected descriptors after rating
+- free-text comment field
+- normalized `roasters` table
+- admin/debug command for last failed operation
 
-### Next 1-2 sessions
+## Cleanup Notes
 
-- verify Supabase writes with current deployment
-- add explicit runtime logs:
-  - active storage backend
-  - OCR request started/failed/succeeded
-  - pending rating saved
-  - final coffee entry saved
-- remove backward compatibility for `SUPABASE_ANON_KEY` after deployments are migrated
+- `README.md` should continue to reflect the real deployed topology, not just local shell usage
+- `placeholder-ocr.js` should be renamed after stability work
+- JSON session helpers should be reviewed for dead code once production flow is settled
 
-### Next 3-5 sessions
+## Bottom Line
 
-- move photos to Supabase Storage
-- add roaster catalog + alias matching
-- add `/debug_last` operator command or admin-only diagnostics
+The MVP bot is real and usable.
 
-### After that
+The most likely root cause chain was mixed:
 
-- switch from long polling to webhooks
-- add descriptors chosen by user after OCR card
-- add explicit comments field
-- add basic admin metrics
+- operational risk in Railway env/deploy consistency
+- plus a real sequencing bug where the rating card could be shown before `pending_ratings` was durably saved
 
-## Data Model Direction
+That sequencing bug is now fixed in code, so a failed Supabase insert should stop the flow before the user gets a misleading clickable card.
 
-Current entry shape is still acceptable for MVP, but next schema iteration should formalize:
+The current blockers are operational:
 
-- `users`
-- `coffee_entries`
-- `pending_ratings`
-- `roasters`
-- `photos`
+- live Supabase env config consistency
+- photo durability
+- polling topology
 
-With `coffee_entries.roaster_id` eventually replacing best-effort string-only `roaster_name`.
-
-## Recommended Cleanup
-
-- rename `src/ocr/placeholder-ocr.js` because it is no longer a placeholder implementation
-- remove dead JSON session functions if they are no longer used
-- add deployment doc for Railway + Supabase exact env vars
-
-## Summary
-
-The bot is already a viable MVP. The main remaining engineering risks are not in Telegram mechanics anymore. They are:
-
-- hosted durability of photos
-- single-instance polling conflicts
-- weak roaster recognition
-- weak operator observability
-
-That is the correct order of work.
+The main product-quality issue after that is roaster recognition.

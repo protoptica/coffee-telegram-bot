@@ -81,9 +81,26 @@ export async function handlePhotoMessage(message) {
     };
 
     const ratingSessionId = randomUUID();
-    const ratingMessage = await sendMessage(chatId, `${formatCoffeeCard(draft)}\n\nRate this coffee:`, {
-      reply_markup: buildRatingKeyboard(ratingSessionId),
+    await setPendingRating(ratingSessionId, {
+      ...draft,
+      processingMessageId: processingMessage.message_id,
+      ratingMessageId: null,
     });
+    logInfo("photo.pending_rating.saved", {
+      chatId,
+      userId,
+      sourceMessageId,
+      ratingSessionId,
+      storageBackend: config.storageBackend,
+    });
+
+    const ratingMessage = await sendMessage(
+      chatId,
+      `${formatCoffeeCard(draft)}\n\nRate this coffee:`,
+      {
+        reply_markup: buildRatingKeyboard(ratingSessionId),
+      }
+    );
     logInfo("photo.rating_prompt.sent", {
       chatId,
       userId,
@@ -97,11 +114,12 @@ export async function handlePhotoMessage(message) {
       processingMessageId: processingMessage.message_id,
       ratingMessageId: ratingMessage.message_id,
     });
-    logInfo("photo.pending_rating.saved", {
+    logInfo("photo.pending_rating.updated", {
       chatId,
       userId,
       sourceMessageId,
       ratingSessionId,
+      ratingMessageId: ratingMessage.message_id,
       storageBackend: config.storageBackend,
     });
 

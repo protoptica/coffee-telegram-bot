@@ -1,4 +1,4 @@
-import { config } from "./config.js";
+import { config, getSupabaseConfigDiagnostics } from "./config.js";
 import { handleCallbackQuery } from "./handlers/callbacks.js";
 import { handleCommand } from "./handlers/commands.js";
 import { handlePhotoMessage } from "./handlers/photos.js";
@@ -53,12 +53,15 @@ async function main() {
   }
 
   await initStorage();
+  const supabaseDiagnostics = getSupabaseConfigDiagnostics();
   logInfo("app.started", {
     storageBackend: config.storageBackend,
     storageDir: config.storageDir,
-    supabaseConfigured: Boolean(
-      config.supabaseUrl && config.supabaseServiceRoleKey
-    ),
+    supabaseConfigured:
+      supabaseDiagnostics.supabaseUrlConfigured &&
+      supabaseDiagnostics.supabaseKeyConfigured,
+    supabaseUrlHost: supabaseDiagnostics.supabaseUrlHost,
+    supabaseKeySource: supabaseDiagnostics.supabaseKeySource,
     ocrApiKeyMode: config.ocrSpaceApiKey === "helloworld" ? "demo" : "custom",
   });
 
